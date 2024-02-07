@@ -1,0 +1,427 @@
+---
+title: "R Notebook"
+output: rmdformats::readthedown
+# output:
+#   html_document:
+#     df_print: kable
+#     keep_md: yes
+---
+# Pre-processing and visualization
+Original code by Kamran Afzali, adapted by Jeanne Racicot
+
+
+
+Load packages
+
+```{r echo = T, message=FALSE, warning=FALSE}
+library(readr)
+library(tidyverse)
+library(gridExtra)
+library(lmerTest)
+library(lme4)
+library(glmnet)
+library(glmmLasso)
+library(MASS)
+library(nlme)
+library(knitr)
+library(kableExtra)
+scale_this <- function(x){
+  (x - mean(x, na.rm=TRUE)) / sd(x, na.rm=TRUE)
+}
+```
+
+
+Load data from prefrontal atlas
+
+
+```{r echo = T, message=FALSE}
+data <- read_csv("output_data/dataframe_day2day.csv")
+conn_names <- read_csv("output_data/105_connection_names_reversed.csv")
+```
+
+Tally
+
+
+```{r}
+data %>% group_by(subject) %>% tally()
+by_id <- data %>% group_by(subject)
+by_id <- by_id %>% 
+  mutate(daysFromFirstScan_STD=scale_this(daysFromFirstScan))
+data$daysFromFirstScan_STD=by_id$daysFromFirstScan_STD
+```
+
+
+```{r}
+plots=list()
+
+subs=unique(data$subject)
+i=1
+for (s in subs) {
+x=as.numeric(data$daysFromFirstScan[data$subject==s])
+y1=as.numeric(as.character(data$PANAS_PA[data$subject==s])) 
+PosA=rep("PA",length(y1))
+y2=as.numeric(as.character(data$PANAS_NA[data$subject==s])) 
+NegA=rep("NA",length(y2))
+
+Data=as.data.frame(rbind(cbind(day=x,outcome=PosA,value=as.numeric(as.character(y1))),
+cbind(day=x,outcome=NegA,value=as.numeric(as.character(y2)))))  
+
+
+Data$day=as.numeric(as.character(Data$day))
+plots[[i]]=ggplot( Data, aes(x = day, y = value, group=outcome, color=outcome)) +
+  geom_line()+geom_point()+ggtitle(as.character(s))
+i=i+1
+rm(Data)
+}
+```
+
+
+## Outcome plots per subject
+
+```{r fig1, fig.height = 10, fig.width = 14, fig.align = "center"}
+do.call(grid.arrange,plots)
+```
+
+```{r include=FALSE}
+head(data)
+```
+
+## Data pre-processiong, creating BP and WP variables
+Between person is the mean of every connection for every session and subject
+Within person is each connection, centered to 0 (value-mean)
+
+
+```{r}
+dataML <-by_id %>% summarise(
+  C1BP = mean(connection1),  
+  C2BP = mean(connection2), 
+  C3BP = mean(connection3), 
+  C4BP = mean(connection4), 
+  C5BP = mean(connection5), 
+  C6BP = mean(connection6), 
+  C7BP = mean(connection7), 
+  C8BP = mean(connection8), 
+  C9BP = mean(connection9), 
+  C10BP = mean(connection10), 
+  C11BP = mean(connection11), 
+  C12BP = mean(connection12), 
+  C13BP = mean(connection13),
+  C14BP = mean(connection14),
+  C15BP = mean(connection15),
+  C16BP = mean(connection16),
+  C17BP = mean(connection17),
+  C18BP = mean(connection18),
+  C19BP = mean(connection19),
+  C20BP = mean(connection20),
+  C21BP = mean(connection21),
+  C22BP = mean(connection22),
+  C23BP = mean(connection23),
+  C24BP = mean(connection24),
+  C25BP = mean(connection25),
+  C26BP = mean(connection26),
+  C27BP = mean(connection27),
+  C28BP = mean(connection28),
+  C29BP = mean(connection29),
+  C30BP = mean(connection30),
+  C31BP = mean(connection31),
+  C32BP = mean(connection32), 
+  C33BP = mean(connection33),
+  C34BP = mean(connection34),
+  C35BP = mean(connection35),
+  C36BP = mean(connection36),
+  C37BP = mean(connection37),
+  C38BP = mean(connection38),
+  C39BP = mean(connection39),
+  C40BP = mean(connection40),
+  C41BP = mean(connection41),
+  C42BP = mean(connection42),
+  C43BP = mean(connection43),
+  C44BP = mean(connection44),
+  C45BP = mean(connection45),
+  C46BP = mean(connection46),
+  C47BP = mean(connection47),
+  C48BP = mean(connection48),
+  C49BP = mean(connection49),
+  C50BP = mean(connection50),
+  C51BP = mean(connection51),
+  C52BP = mean(connection52),
+  C53BP = mean(connection53),
+  C54BP = mean(connection54),
+  C55BP = mean(connection55),
+  C56BP = mean(connection56),
+  C57BP = mean(connection57),
+  C58BP = mean(connection58),
+  C59BP = mean(connection59),
+  C60BP = mean(connection60),
+  C61BP = mean(connection61),
+  C62BP = mean(connection62),
+  C63BP = mean(connection63),
+  C64BP = mean(connection64),
+  C65BP = mean(connection65),
+  C66BP = mean(connection66),
+  C67BP = mean(connection67),
+  C68BP = mean(connection68),
+  C69BP = mean(connection69),
+  C70BP = mean(connection70),
+  C71BP = mean(connection71),
+  C72BP = mean(connection72),
+  C73BP = mean(connection73),
+  C74BP = mean(connection74),
+  C75BP = mean(connection75),
+  C76BP = mean(connection76),
+  C77BP = mean(connection77),
+  C78BP = mean(connection78),
+  C79BP = mean(connection79),
+  C80BP = mean(connection80),
+  C81BP = mean(connection81),
+  C82BP = mean(connection82),
+  C83BP = mean(connection83),
+  C84BP = mean(connection84),
+  C85BP = mean(connection85),
+  C86BP = mean(connection86),
+  C87BP = mean(connection87),
+  C88BP = mean(connection88),
+  C89BP = mean(connection89),
+  C90BP = mean(connection90),
+  C91BP = mean(connection91),
+  C92BP = mean(connection92),
+  C93BP = mean(connection93),
+  C94BP = mean(connection94),
+  C95BP = mean(connection95),
+  C96BP = mean(connection96),
+  C97BP = mean(connection97),
+  C98BP = mean(connection98),
+  C99BP = mean(connection99),
+  C100BP = mean(connection100),
+  C101BP = mean(connection101),
+  C102BP = mean(connection102),
+  C103BP = mean(connection103),
+  C104BP = mean(connection104),
+  C105BP = mean(connection105)
+
+  
+  ) %>% 
+  inner_join(data, by = "subject")  %>%
+  mutate(C1WP=connection1 -C1BP,
+         C2WP=connection2 -C2BP,
+         C3WP=connection3 -C3BP,
+         C4WP=connection4 -C4BP,
+         C5WP=connection5 -C5BP,
+         C6WP=connection6 -C6BP,
+         C7WP=connection7 -C7BP,
+         C8WP=connection8 -C8BP,
+         C9WP=connection9 -C9BP,
+         C10WP=connection10-C10BP,
+         C11WP=connection11-C11BP,
+         C12WP=connection12-C12BP,
+         C13WP=connection13-C13BP,
+         C14WP=connection14-C14BP,
+         C15WP=connection15-C15BP,
+         C16WP=connection16-C16BP,
+         C17WP=connection17-C17BP,
+         C18WP=connection18-C18BP,
+         C19WP=connection19-C19BP,
+         C20WP=connection20-C20BP,
+         C21WP=connection21-C21BP,
+         C22WP=connection22-C22BP,
+         C23WP=connection23-C23BP,
+         C24WP=connection24-C24BP,
+         C25WP=connection25-C25BP,
+         C26WP=connection26-C26BP,
+         C27WP=connection27-C27BP,
+         C28WP=connection28-C28BP,
+         C29WP=connection29-C29BP,
+         C30WP=connection30-C30BP,
+         C31WP=connection31 -C31BP,
+         C32WP=connection32 -C32BP,
+         C33WP=connection33 -C33BP,
+         C34WP=connection34 -C34BP,
+         C35WP=connection35 -C35BP,         
+         C36WP=connection36 -C36BP,      
+         C37WP=connection37 -C37BP,         
+         C38WP=connection38 -C38BP,         
+         C39WP=connection39 -C39BP,         
+         C40WP=connection40 -C40BP,         
+         C41WP=connection41 -C41BP,
+         C42WP=connection42 -C42BP,
+         C43WP=connection43 -C43BP,
+         C44WP=connection44 -C44BP,
+         C45WP=connection45 -C45BP,
+         C46WP=connection46 -C46BP,
+         C47WP=connection47 -C47BP,
+         C48WP=connection48 -C48BP,
+         C49WP=connection49 -C49BP,
+         C50WP=connection50 -C50BP,
+         C51WP=connection51 -C51BP,
+         C52WP=connection52 -C52BP,
+         C53WP=connection53 -C53BP,
+         C54WP=connection54 -C54BP,
+         C55WP=connection55 -C55BP,
+         C56WP=connection56 -C56BP,
+         C57WP=connection57 -C57BP,
+         C58WP=connection58 -C58BP,
+         C59WP=connection59 -C59BP,
+         C60WP=connection60 -C60BP,
+         C61WP=connection61 -C61BP,
+         C62WP=connection62 -C62BP,
+         C63WP=connection63 -C63BP,
+         C64WP=connection64 -C64BP,
+         C65WP=connection65 -C65BP,
+         C66WP=connection66 -C66BP,
+         C67WP=connection67 -C67BP,
+         C68WP=connection68 -C68BP,
+         C69WP=connection69 -C69BP,
+         C70WP=connection70 -C70BP,
+         C71WP=connection71 -C71BP,
+         C72WP=connection72 -C72BP,
+         C73WP=connection73 -C73BP,
+         C74WP=connection74 -C74BP,
+         C75WP=connection75 -C75BP,
+         C76WP=connection76 -C76BP,
+         C77WP=connection77 -C77BP,
+         C78WP=connection78 -C78BP,
+         C79WP=connection79 -C79BP,
+         C80WP=connection80 -C80BP,
+         C81WP=connection81 -C81BP,
+         C82WP=connection82 -C82BP,
+         C83WP=connection83 -C83BP,
+         C84WP=connection84 -C84BP,
+         C85WP=connection85 -C85BP,
+         C86WP=connection86 -C86BP,
+         C87WP=connection87 -C87BP,
+         C88WP=connection88 -C88BP,
+         C89WP=connection89 -C89BP,
+         C90WP=connection90 -C90BP,
+         C91WP=connection91 -C91BP,
+         C92WP=connection92 -C92BP,
+         C93WP=connection93 -C93BP,
+         C94WP=connection94 -C94BP,
+         C95WP=connection95 -C95BP,
+         C96WP=connection96 -C96BP,
+         C97WP=connection97 -C97BP,
+         C98WP=connection98 -C98BP,
+         C99WP=connection99 -C99BP,
+         C100WP=connection100 -C100BP,
+         C101WP=connection101 -C101BP,
+         C102WP=connection102 -C102BP,
+         C103WP=connection103 -C103BP,
+         C104WP=connection104 -C104BP,
+         C105WP=connection105 -C105BP
+  )
+
+```
+
+# Linear Models
+
+## A note on the massive univariate models
+
+PANAS_PA = fixed intercept (group level mean of PA) + C1WP (effect of connection1 within person) + C1BP (effect of connection1 between person) + daysFromFirstScan_STD (linear effect of time) + 1|subject (random intercept or deviation of the person level mean with respect to the group level mean PA).
+
+PANAS_NA = fixed intercept (group level mean of NA) + C1WP (effect of connection1 within person) + C1BP (effect of connection1 between person) + daysFromFirstScan_STD (linear effect of time) + 1|subject (random intercept or deviation of the person level mean with respect to the group level mean NA).
+
+
+Alors:\
+intercept = group level mean of the dependent variable\
+daysFromFirstScan_STD = linear effect of time\
+C_X_WP= effect of connection "_X_" within person\
+C_X_BP= effect of connection "_X_" between person
+
+
+
+## Model for positive affectivity with BP effects
+```{r, results = FALSE, message = FALSE}
+results_PA=c()
+for (i in 1:105) {
+  vars = paste("C",i,"WP + C",i,"BP",sep= "")
+  otherVars <- c("daysFromFirstScan_STD","(1|subject)")
+  formList=lapply(vars,function(x) {reformulate(c(otherVars,x),response="PANAS_PA")})
+  print(formList)
+  res=summary(lapply(formList,lmer,data=dataML)[[1]])$coefficients
+  results_PA=rbind(res,results_PA)
+}
+results_PA=as.data.frame(results_PA)
+results_PA$sig=results_PA$`Pr(>|t|)`<0.05
+```
+
+
+FDR correction BP
+
+
+```{r}
+clean_results_PA = results_PA %>%
+  filter(str_detect(row.names(results_PA), 'BP'))%>%
+  mutate(pval.adj = p.adjust (`Pr(>|t|)`,"fdr"))%>%
+  mutate(conn_names, .before=1)%>%as.data.frame()
+
+clean_results_PA%>% kbl(booktabs = T, linesep = "") %>% 
+  kable_paper(full_width = F) %>%column_spec(1:9, color = "white", background = case_when(clean_results_PA$pval.adj<0.10~"green",
+                                                                                          clean_results_PA$'Pr(>|t|)'<0.05~"gold",
+                                                                                          TRUE~"lightgray"))
+```
+
+FDR correction WP
+
+```{r}
+clean_results_PA = results_PA %>%
+  filter(str_detect(row.names(results_PA), 'WP'))%>%
+  mutate(pval.adj = p.adjust (`Pr(>|t|)`,"fdr"))%>%
+  mutate(conn_names, .before=1)%>%as.data.frame()
+
+clean_results_PA%>% kbl(booktabs = T, linesep = "") %>% 
+  kable_paper(full_width = F) %>%column_spec(1:9, color = "white", background = case_when(clean_results_PA$pval.adj<0.10~"green",
+                                                                                          clean_results_PA$'Pr(>|t|)'<0.05~"gold",
+                                                                                          TRUE~"lightgray"))
+```
+
+## Model for negative affectivity with BP effects
+
+
+```{r, results = FALSE, message = FALSE}
+results_NA=c()
+for (i in 1:105) {
+  vars = paste("C",i,"WP + C",i,"BP",sep= "")
+  otherVars <- c("daysFromFirstScan_STD","(1|subject)")
+  formList=lapply(vars,function(x) {reformulate(c(otherVars,x),response="PANAS_NA")})
+  print(formList)
+  res=summary(lapply(formList,lmer,data=dataML)[[1]])$coefficients
+  results_NA=rbind(res,results_NA)
+}
+results_NA=as.data.frame(results_NA)
+results_NA$sig=results_NA$`Pr(>|t|)`<0.05
+```
+
+FDR correction BP
+
+```{r}
+clean_results_NA = results_NA %>%
+  filter(str_detect(row.names(results_NA), 'BP'))%>%
+  mutate(pval.adj = p.adjust (`Pr(>|t|)`,"fdr"))%>%
+  mutate(conn_names, .before=1)%>%as.data.frame()
+
+clean_results_NA%>% kbl(booktabs = T, linesep = "") %>% 
+  kable_paper(full_width = F) %>%column_spec(1:9, color = "white", background = case_when(clean_results_NA$pval.adj<0.10~"green",
+                                                                                          clean_results_NA$'Pr(>|t|)'<0.05~"gold",
+                                                                                          TRUE~"lightgray"))
+                                               
+                                               
+
+
+```
+
+
+FDR correction WP
+
+```{r}
+
+clean_results_NA = results_NA %>%
+  filter(str_detect(row.names(results_NA), 'WP'))%>%
+  mutate(pval.adj = p.adjust (`Pr(>|t|)`,"fdr"))%>%
+  mutate(conn_names, .before=1)%>%as.data.frame()
+
+  
+clean_results_NA%>% kbl(booktabs = T, linesep = "") %>% 
+  kable_paper(full_width = F) %>%column_spec(1:9, color = "white", background = case_when(clean_results_NA$pval.adj<0.10~"green",
+                                                                                          clean_results_NA$'Pr(>|t|)'<0.05~"gold",
+                                                                                          TRUE~"lightgray"))
+```
+

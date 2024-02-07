@@ -1,0 +1,637 @@
+---
+title: "R Notebook"
+output: rmdformats::readthedown
+# output:
+#   html_document:
+#     df_print: kable
+#     keep_md: yes
+---
+# Pre-processing and visualization
+Original code by Kamran Afzali, adapted by Jeanne Racicot
+
+
+Load packages
+
+```{r echo = T, message=FALSE, warning=FALSE}
+library(readr)
+library(tidyverse)
+library(gridExtra)
+library(lmerTest)
+library(lme4)
+library(glmnet)
+library(glmmLasso)
+library(MASS)
+library(nlme)
+library(knitr)
+library(kableExtra)
+scale_this <- function(x){
+  (x - mean(x, na.rm=TRUE)) / sd(x, na.rm=TRUE)
+}
+```
+
+
+Load data from prefrontal atlas
+
+
+```{r echo = T, message=FALSE}
+data <- read_csv("output_data/pca_80_day2day.csv")
+```
+
+Tally
+
+
+```{r}
+data %>% group_by(subject) %>% tally()
+by_id <- data %>% group_by(subject)
+by_id <- by_id %>% 
+  mutate(daysFromFirstScan_STD=scale_this(daysFromFirstScan))
+data$daysFromFirstScan_STD=by_id$daysFromFirstScan_STD
+```
+
+
+```{r}
+plots=list()
+
+subs=unique(data$subject)
+i=1
+for (s in subs) {
+x=as.numeric(data$daysFromFirstScan[data$subject==s])
+y1=as.numeric(as.character(data$PANAS_PA[data$subject==s])) 
+PosA=rep("PA",length(y1))
+y2=as.numeric(as.character(data$PANAS_NA[data$subject==s])) 
+NegA=rep("NA",length(y2))
+
+Data=as.data.frame(rbind(cbind(day=x,outcome=PosA,value=as.numeric(as.character(y1))),
+cbind(day=x,outcome=NegA,value=as.numeric(as.character(y2)))))  
+
+
+Data$day=as.numeric(as.character(Data$day))
+plots[[i]]=ggplot( Data, aes(x = day, y = value, group=outcome, color=outcome)) +
+  geom_line()+geom_point()+ggtitle(as.character(s))
+i=i+1
+rm(Data)
+}
+```
+
+
+## Outcome plots per subject
+
+```{r fig1, fig.height = 10, fig.width = 14, fig.align = "center"}
+do.call(grid.arrange,plots)
+```
+
+```{r include=FALSE}
+head(data)
+```
+
+## Data pre-processiong, creating BP and WP variables
+Between person is the mean of every connection (via their component) for every session and subject
+Within person is each component, centered to 0 (value-mean for each component)
+
+
+```{r}
+dataML <-by_id %>% summarise(
+  C1BP = mean(component_1),  
+  C2BP = mean(component_2), 
+  C3BP = mean(component_3), 
+  C4BP = mean(component_4), 
+  C5BP = mean(component_5), 
+  C6BP = mean(component_6), 
+  C7BP = mean(component_7), 
+  C8BP = mean(component_8), 
+  C9BP = mean(component_9), 
+  C10BP = mean(component_10), 
+  C11BP = mean(component_11), 
+  C12BP = mean(component_12), 
+  C13BP = mean(component_13),
+  C14BP = mean(component_14),
+  C15BP = mean(component_15),
+  C16BP = mean(component_16),
+  C17BP = mean(component_17),
+  C18BP = mean(component_18),
+  C19BP = mean(component_19),
+  C20BP = mean(component_20),
+  C21BP = mean(component_21),
+  C22BP = mean(component_22),
+  C23BP = mean(component_23),
+  C24BP = mean(component_24),
+  C25BP = mean(component_25),
+  C26BP = mean(component_26),
+  C27BP = mean(component_27),
+  C28BP = mean(component_28),
+  C29BP = mean(component_29),
+  C30BP = mean(component_30)
+  
+  ) %>% 
+  inner_join(data, by = "subject")  %>%
+  mutate(C1WP=component_1 -C1BP,
+         C2WP=component_2 -C2BP,
+         C3WP=component_3 -C3BP,
+         C4WP=component_4 -C4BP,
+         C5WP=component_5 -C5BP,
+         C6WP=component_6 -C6BP,
+         C7WP=component_7 -C7BP,
+         C8WP=component_8 -C8BP,
+         C9WP=component_9 -C9BP,
+         C10WP=component_10-C10BP,
+         C11WP=component_11-C11BP,
+         C12WP=component_12-C12BP,
+         C13WP=component_13-C13BP,
+         C14WP=component_14-C14BP,
+         C15WP=component_15-C15BP,
+         C16WP=component_16-C16BP,
+         C17WP=component_17-C17BP,
+         C18WP=component_18-C18BP,
+         C19WP=component_19-C19BP,
+         C20WP=component_20-C20BP,
+         C21WP=component_21-C21BP,
+         C22WP=component_22-C22BP,
+         C23WP=component_23-C23BP,
+         C24WP=component_24-C24BP,
+         C25WP=component_25-C25BP,
+         C26WP=component_26-C26BP,
+         C27WP=component_27-C27BP,
+         C28WP=component_28-C28BP,
+         C29WP=component_29-C29BP,
+         C30WP=component_30-C30BP
+  )
+
+dataML2=dataML
+```
+
+
+# Multivariate Models
+
+## Lasso Model for positive affectivity without BP effects
+
+
+```{r message=FALSE, warning = FALSE, include=FALSE}
+
+lambda <- seq(100, 0, by=-5)
+BIC_vec <- rep(Inf, length(lambda))
+PQL <- glmmPQL(PANAS_PA ~ 1,
+               random = ~1|subject,
+               family = "gaussian",
+               data = dataML)
+Delta.start <- c(as.numeric(PQL$coef$fixed),
+                 rep(0, 31), #number of predictors
+                 as.numeric(t(PQL$coef$random$subject)))
+
+Q.start <- as.numeric(VarCorr(PQL)[1,1])
+
+dataML$subject=as.factor(dataML$subject)
+
+for (j in 1:30)
+{
+  print(paste("Iteration ", j, sep=""))
+  
+   glm1 <- try(glmmLasso(PANAS_PA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                           C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP  + C28WP  + C29WP + C30WP + daysFromFirstScan_STD  ,
+              rnd = list(subject = ~1), 
+              family = gaussian(link = "identity"),
+              data = dataML,
+              lambda = lambda[j],
+              switch.NR = TRUE,
+              final.re = TRUE,
+              control=list(start = Delta.start,q_start = Q.start)), silent=TRUE)  
+   
+   
+   if(class(glm1)!="try-error")
+   {  
+     BIC_vec[j]<-glm1$bic
+   }
+
+}
+
+opt<-which.min(BIC_vec)
+
+glm1_final <-  glmmLasso(PANAS_PA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                           C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP  + C28WP  + C29WP + C30WP + daysFromFirstScan_STD  ,
+                         rnd = list(subject = ~1), 
+                         family = gaussian(link = "identity"),
+                         data = dataML,
+                         lambda = lambda[opt],
+                         switch.NR = TRUE,
+                         final.re = TRUE,
+                         control=list(start = Delta.start,q_start = Q.start))
+
+```
+
+```{r}
+coefs=summary(glm1_final)$coefficients%>% as.data.frame() 
+
+
+coefs%>%kbl(booktabs = T, linesep = "") %>% 
+  kable_paper(full_width = F)%>%column_spec(1:5, color = "white", background=ifelse(is.na(coefs$p.value),  "lightgray", "green" ))
+
+```
+### Model total WP variance explained
+
+```{r,message = FALSE}
+PQL <- glmmPQL(PANAS_PA ~ 1,
+               random = ~1|subject,
+               family = "gaussian",
+               data = dataML)
+BPVEX=cor(PQL$fitted[,"subject"],PQL$data$PANAS_PA)^2
+resid=1-BPVEX
+
+
+PQL2 <- glmmPQL(PANAS_PA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                  C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP + C28WP  + C29WP + C30WP  + daysFromFirstScan_STD  ,
+                random = ~1|subject,
+                family = "gaussian",
+                data = dataML)
+
+TotVEX=cor(PQL2$fitted[,"subject"],PQL2$data$PANAS_PA)^2
+WPVEX=(TotVEX-BPVEX)/resid
+paste(round(WPVEX*100,3), "% is the model's total WP R squared")
+
+
+```
+
+### Permutation test per predictor
+
+```{r, message=FALSE}
+set.seed(682)
+
+preds=rownames(summary(glm1_final)$coefficients[summary(glm1_final)$coefficients[,"Estimate"]!=0,])
+
+preds=preds[-which(preds=="(Intercept)")]
+
+for (i in preds) {
+  dataMLb=dataML
+  x=as.matrix(dataMLb[,i])
+  dataMLb[,i]=sample(x,nrow(x))
+  
+  
+  PQL2b <- glmmPQL(PANAS_PA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                     C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP + C28WP  + C29WP + C30WP  + daysFromFirstScan_STD  ,
+                   random = ~1|subject,
+                   family = "gaussian",
+                   data = dataMLb)
+  
+  TotVEXb=cor(PQL2b$fitted[,"subject"],PQL2b$data$PANAS_PA)^2
+  WPVEXb=(TotVEXb-BPVEX)/resid
+  WPVEXb
+  print(paste("The model with permuted predictor",i,"has a R squared of", round(WPVEXb*100,3),"corresponding to a change R squared of", round(100*(WPVEXb-WPVEX),3) ,sep= " "))
+}
+
+```
+
+### LSO cross validation per predictor (Total variance)
+
+```{r, message=FALSE}
+unique(dataML$subject)
+
+length(unique(dataML$subject))
+for (j in 1:6) {
+dataMLc=dataML[dataML$subject!=unique(dataML$subject)[j],]
+dataMLd=dataML[dataML$subject==unique(dataML$subject)[j],]
+
+
+PQL2 <- glmmPQL(PANAS_PA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                  C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP + C28WP + C29WP + C30WP + daysFromFirstScan_STD  ,
+                random = ~1|subject,
+                family = "gaussian",
+                data = dataMLc)
+
+R2=100*round(cor(predict(PQL2, dataMLd, level=0),dataMLd$PANAS_PA)^2,3)
+print(paste("amount of explained variance for the subject", as.character(unique(dataML$subject)[j]),"is",R2, "%"))
+}
+
+
+```
+
+
+### LSO cross validation per predictor (Intra-individual variance)
+```{r, message=FALSE}
+unique(dataML$subject)
+length(unique(dataML$subject))
+PQL <- glmmPQL(PANAS_PA ~ 1,
+               random = ~1|subject,
+               family = "gaussian",
+               data = dataML)
+BPVEX=cor(PQL$fitted[,"subject"],PQL$data$PANAS_PA)^2
+resid=1-BPVEX
+for (j in 1:6) {
+  dataMLc=dataML[dataML$subject!=unique(dataML$subject)[j],]
+  dataMLd=dataML[dataML$subject==unique(dataML$subject)[j],]
+  
+  
+  PQL2b <- glmmPQL(PANAS_PA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                     C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                     C13WP  + C14WP  + C15WP + C16WP  + C17WP  + C18WP +
+                     C19WP  + C20WP  + C21WP  + C22WP  + C23WP  + C24WP + 
+                     C25WP + C26WP  + C27WP + C28WP + C29WP + C30WP + daysFromFirstScan_STD  ,
+                   random = ~1|subject,
+                   family = "gaussian",
+                   data = dataMLc)
+  
+  var1=var(PQL$residuals[,"subject"][dataML$subject==unique(dataML$subject)[j]])
+  #var1 is the residual variance for participant j from random intercept only mlm with carved out BP effects
+  x=(dataMLd$PANAS_PA)
+  y=predict(PQL2b, dataMLd, level=0)
+  m1=lm (x~y)
+  var2=var(m1$residuals)
+  #var2 is the residual variance for participant j from the full model fitted on other individuals
+  WPVEX=round((abs(var1-var2))/(min(var1,var2)),3)*100
+  #WPVEX is the within person explained variance for participant j calculated as the percentage change between var1 and var2
+  print(paste("amount of the within person explained variance for the subject", as.character(unique(dataML$subject)[j]),"is",WPVEX))
+  
+}
+```
+## Lasso Model for negative affectivity without BP effects
+
+```{r message=FALSE, warning = FALSE, include=FALSE}
+
+lambda <- seq(100, 0, by=-5)
+BIC_vec <- rep(Inf, length(lambda))
+PQL <- glmmPQL(PANAS_NA ~ 1,
+               random = ~1|subject,
+               family = "gaussian",
+               data = dataML)
+Delta.start <- c(as.numeric(PQL$coef$fixed),
+                 rep(0, 31), #number of predictors
+                 as.numeric(t(PQL$coef$random$subject)))
+
+Q.start <- as.numeric(VarCorr(PQL)[1,1])
+
+dataML$subject=as.factor(dataML$subject)
+
+for (j in 1:30)
+{
+  print(paste("Iteration ", j, sep=""))
+  
+   glm1 <- try(glmmLasso(PANAS_NA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                           C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP + C28WP  + C29WP + C30WP + daysFromFirstScan_STD  ,
+              rnd = list(subject = ~1), 
+              family = gaussian(link = "identity"),
+              data = dataML,
+              lambda = lambda[j],
+              switch.NR = TRUE,
+              final.re = TRUE,
+              control=list(start = Delta.start,q_start = Q.start)), silent=TRUE)  
+   
+   
+   if(class(glm1)!="try-error")
+   {  
+     BIC_vec[j]<-glm1$bic
+   }
+
+}
+
+opt<-which.min(BIC_vec)
+
+glm1_final <-  glmmLasso(PANAS_NA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                           C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP + C28WP  + C29WP + C30WP + daysFromFirstScan_STD  ,
+                         rnd = list(subject = ~1), 
+                         family = gaussian(link = "identity"),
+                         data = dataML,
+                         lambda = lambda[opt],
+                         switch.NR = TRUE,
+                         final.re = TRUE,
+                         control=list(start = Delta.start,q_start = Q.start))
+
+```
+
+```{r}
+coefs=summary(glm1_final)$coefficients%>% as.data.frame() 
+
+
+coefs%>%kbl(booktabs = T, linesep = "") %>% 
+  kable_paper(full_width = F)%>%column_spec(1:5, color = "white", background=ifelse(is.na(coefs$p.value),  "lightgray", "green" ))
+
+```
+
+### Model total WP variance explained
+
+```{r,message = FALSE}
+PQL <- glmmPQL(PANAS_NA ~ 1,
+               random = ~1|subject,
+               family = "gaussian",
+               data = dataML)
+BPVEX=cor(PQL$fitted[,"subject"],PQL$data$PANAS_NA)^2
+resid=1-BPVEX
+
+
+PQL2 <- glmmPQL(PANAS_NA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                  C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP  + C28WP  + C29WP + C30WP + daysFromFirstScan_STD  ,
+                random = ~1|subject,
+                family = "gaussian",
+                data = dataML)
+
+TotVEX=cor(PQL2$fitted[,"subject"],PQL2$data$PANAS_NA)^2
+WPVEX=(TotVEX-BPVEX)/resid
+paste(round(WPVEX*100,3), "% is the model's total WP R squared")
+```
+
+### LPO permutation test per predictor 
+
+```{r, message=FALSE}
+set.seed(682)
+
+preds=rownames(summary(glm1_final)$coefficients[summary(glm1_final)$coefficients[,"Estimate"]!=0,])
+
+preds=preds[-which(preds=="(Intercept)")]
+
+for (i in preds) {
+  dataMLb=dataML
+  x=as.matrix(dataMLb[,i])
+  dataMLb[,i]=sample(x,nrow(x))
+  
+  
+  PQL2b <- glmmPQL(PANAS_NA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                     C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP  + C28WP  + C29WP + C30WP + daysFromFirstScan_STD  ,
+                   random = ~1|subject,
+                   family = "gaussian",
+                   data = dataMLb)
+  
+  TotVEXb=cor(PQL2b$fitted[,"subject"],PQL2b$data$PANAS_NA)^2
+  WPVEXb=(TotVEXb-BPVEX)/resid
+  WPVEXb
+  print(paste("The model with permuted predictor",i,"has a R squared of", round(WPVEXb*100,3),"corresponding to a change R squared of", round(100*(WPVEXb-WPVEX),3) ,sep= " "))
+}
+
+
+```
+
+### LSO cross validation per predictor (Total variance)
+
+```{r, message=FALSE}
+unique(dataML$subject)
+
+length(unique(dataML$subject))
+for (j in 1:6) {
+dataMLc=dataML[dataML$subject!=unique(dataML$subject)[j],]
+dataMLd=dataML[dataML$subject==unique(dataML$subject)[j],]
+
+
+PQL2 <- glmmPQL(PANAS_NA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                  C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                           C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                           C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                           C25WP + C26WP  + C27WP  + C28WP  + C29WP + C30WP + daysFromFirstScan_STD  ,
+                random = ~1|subject,
+                family = "gaussian",
+                data = dataMLc)
+
+R2=100*round(cor(predict(PQL2, dataMLd, level=0),dataMLd$PANAS_NA)^2,3)
+print(paste("amount of explained variance for the subject", as.character(unique(dataML$subject)[j]),"is",R2, "%"))
+}
+
+
+```
+
+
+### LSO cross validation per predictor (Intra-individual variance)
+```{r, message=FALSE}
+unique(dataML$subject)
+length(unique(dataML$subject))
+PQL <- glmmPQL(PANAS_NA ~ 1,
+               random = ~1|subject,
+               family = "gaussian",
+               data = dataML)
+BPVEX=cor(PQL$fitted[,"subject"],PQL$data$PANAS_NA)^2
+resid=1-BPVEX
+for (j in 1:6) {
+  dataMLc=dataML[dataML$subject!=unique(dataML$subject)[j],]
+  dataMLd=dataML[dataML$subject==unique(dataML$subject)[j],]
+  
+  
+  PQL2b <- glmmPQL(PANAS_NA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                     C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                     C13WP  + C14WP  + C15WP + C16WP  + C17WP  + C18WP +
+                     C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                     C25WP + C26WP  + C27WP  + C28WP  + C29WP + C30WP  + daysFromFirstScan_STD,
+                   random = ~1|subject,
+                   family = "gaussian",
+                   data = dataMLc)
+  
+  var1=var(PQL$residuals[,"subject"][dataML$subject==unique(dataML$subject)[j]])
+  #var1 is the residual variance for participant j from random intercept only mlm with carved out BP effects
+  x=(dataMLd$PANAS_NA)
+  y=predict(PQL2b, dataMLd, level=0)
+  m1=lm (x~y)
+  var2=var(m1$residuals)
+  #var2 is the residual variance for participant j from the full model fitted on other individuals
+  WPVEX=round((abs(var1-var2))/(min(var1,var2)),3)*100
+  #WPVEX is the within person explained variance for participant j calculated as the percentage change between var1 and var2
+  print(paste("amount of the within person explained variance for the subject", as.character(unique(dataML$subject)[j]),"is",WPVEX))
+  
+}
+```
+
+
+## Cross validated Lasso Model for both positive and negative affectivity without BP effects
+
+```{r, message=FALSE}
+dataML=dataML2
+dataML_count=dataML%>%group_by(subject)%>%summarise(n = n())
+dataML_indexes=c()
+for (i in 1:nrow(dataML_count)) {
+  j=round(c(seq(1,dataML_count$n[i],length.out = 10)),0)
+  k=as.numeric(as.character(dataML_count$subject[i]))
+  dataML_indexes=rbind(dataML_indexes,c(k,j))
+}
+
+
+train_indices=list()
+for (k in 1:5) {
+dataML_indexes_training=c()
+for (i in 1:nrow(dataML_indexes)) {
+session_count= seq(dataML_indexes[i,2],dataML_indexes[i,11-k]-1)
+subject=rep(dataML_indexes[i,1],length(session_count)) 
+dataML_indexes_training=rbind(dataML_indexes_training,cbind(subject,session_count))}
+train_indices[[k]]= dataML_indexes_training}
+
+
+
+test_indices=list()
+for (k in 1:5) {
+dataML_indexes_test=c()
+for (i in 1:nrow(dataML_indexes)) {
+session_count= seq(dataML_indexes[i,11-k],dataML_indexes[i,12-k])
+subject=rep(dataML_indexes[i,1],length(session_count)) 
+dataML_indexes_test=rbind(dataML_indexes_test,cbind(subject,session_count))}
+test_indices[[k]]= dataML_indexes_test}
+
+
+CV_PA=c()
+CV_NA=c()
+for (j in 1:length(train_indices)) {
+dataML_temp_train=as.data.frame(train_indices[[j]])%>%left_join(dataML, by = c("subject","session_count"))
+dataML_temp_test=as.data.frame(train_indices[[j]])%>%left_join(dataML, by = c("subject","session_count"))
+
+PQL <- glmmPQL(PANAS_PA ~ 1,
+               random = ~1|subject,
+               family = "gaussian",
+               data = dataML_temp_test)
+BPVEX=cor(PQL$fitted[,"subject"],PQL$data$PANAS_PA)^2
+resid=1-BPVEX
+PQL2 <- glmmPQL(PANAS_PA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                  C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                  C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                  C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                  C25WP + C26WP  + C27WP + C28WP  + C29WP + C30WP  + daysFromFirstScan_STD  ,
+                random = ~1|subject,
+                family = "gaussian",
+                data = dataML_temp_train)
+
+TotVEX=round(cor(predict(PQL2, dataML_temp_test, level=0),dataML_temp_test$PANAS_PA)^2,3)
+WPVEX=abs((TotVEX-BPVEX)/resid)
+CV_PA=c(CV_PA,WPVEX*100)
+PQL <- glmmPQL(PANAS_NA ~ 1,
+               random = ~1|subject,
+               family = "gaussian",
+               data = dataML_temp_test)
+BPVEX=cor(PQL$fitted[,"subject"],PQL$data$PANAS_NA)^2
+resid=1-BPVEX
+PQL2 <- glmmPQL(PANAS_NA ~ C1WP  + C2WP  + C3WP + C4WP  + C5WP  + C6WP +  
+                  C7WP  + C8WP  + C9WP + C10WP  + C11WP  + C12WP +
+                  C13WP  + C14WP  + C15WP + C16WP + C17WP + C18WP + 
+                  C19WP  + C20WP  + C21WP + C22WP  + C23WP  + C24WP + 
+                  C25WP + C26WP  + C27WP + C28WP  + C29WP + C30WP  + daysFromFirstScan_STD  ,
+                random = ~1|subject,
+                family = "gaussian",
+                data = dataML_temp_train)
+
+TotVEX=round(cor(predict(PQL2, dataML_temp_test, level=0),dataML_temp_test$PANAS_NA)^2,3)
+WPVEX=abs((TotVEX-BPVEX)/resid)
+CV_NA=c(CV_NA,WPVEX)
+}
+```
+
+```{r}
+
+print(paste(round(mean(CV_PA),3), "% is the cross validated mean WP R squared for PANAS_PA"))
+print(paste(round(mean(CV_NA),3), "% is the cross validated mean WP R squared for PANAS_NA"))
+
+
+```
